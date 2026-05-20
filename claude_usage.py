@@ -27,6 +27,7 @@ stores or transmits it. Stdlib only. Run:  pythonw claude_usage.py
 import json
 import math
 import os
+import socket
 import threading
 import time
 import urllib.request
@@ -439,10 +440,6 @@ class App(tk.Tk):
         self.plan = tk.Label(head, text="", bg=BG, fg=CORAL,
                             font=(UI_FONT, 8, "bold"))
         self.plan.pack(side="left", padx=(6, 0), pady=(5, 0))
-        close = tk.Label(head, text="✕", bg=BG, fg=DIM,
-                        font=(UI_FONT, 10, "bold"), cursor="hand2")
-        close.pack(side="right")
-        close.bind("<Button-1>", lambda e: self.destroy())
 
         self.mascot = Mascot(self)
         self.mascot.pack(fill="x", padx=6)
@@ -519,5 +516,20 @@ class App(tk.Tk):
         return sum(1 for b in (self.opus, self.sonnet) if b.winfo_ismapped())
 
 
+def single_instance(port: int = 49517):
+    """Bind a localhost port so a second launch (e.g. a new Claude session)
+    finds the widget already running and exits quietly. Returns the held
+    socket, or None if another instance owns the port."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind(("127.0.0.1", port))
+        return s
+    except OSError:
+        return None
+
+
 if __name__ == "__main__":
+    _lock = single_instance()
+    if _lock is None:
+        raise SystemExit(0)        # already running
     App().mainloop()

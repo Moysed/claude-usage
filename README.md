@@ -17,6 +17,13 @@ Tiny always-on-top window showing your Claude plan limits — the same numbers a
 Bar colour: green < 70% · amber 70–89% · red ≥ 90%. Mascot + window icon are
 drawn in code (Tkinter vectors) — no image files, still stdlib-only.
 
+## Use your own mascot
+**Right-click the mascot** → **Choose image…** to swap Clawd for your own
+picture. PNG and GIF work (animated GIFs play); your image paces and bobs with
+the same mood-driven rhythm. The choice is remembered in `~/.claude-usage.json`.
+Right-click → **Reset to Clawd** brings the crab back. Still stdlib-only — Tk
+loads PNG/GIF natively, no `pip install`.
+
 ## Run
 ```
 Double-click  start.vbs        (silent, no console)

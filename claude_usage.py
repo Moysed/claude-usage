@@ -13,6 +13,11 @@ Clawd scuttles back and forth and changes mood with how much of your limit
 you've burned (happy < 50% · normal 50-79% · tired >= 80%).
 Click him and he shuts his eyes, grins, and pops a few hearts. 🦀
 
+Right-click the mascot to swap Clawd for your own image (PNG/GIF — animated
+GIFs play). Your pick paces and bobs with the same mood-driven rhythm. The
+path is remembered in ~/.claude-usage.json; right-click → "Reset to Clawd"
+to bring the crab back.
+
 Reads live usage exactly like Claude Code's /usage:
   GET https://api.anthropic.com/api/oauth/usage  (Bearer token from ~/.claude/.credentials.json)
 The token is owned + refreshed by Claude Code; this widget only reads it, never
@@ -29,8 +34,10 @@ import urllib.error
 from datetime import datetime, timezone
 import tkinter as tk
 import tkinter.font as tkfont
+from tkinter import filedialog
 
 CREDS = os.path.expanduser("~/.claude/.credentials.json")
+CONFIG = os.path.expanduser("~/.claude-usage.json")
 USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 REFRESH_MS = 60_000     # auto-refresh every 1 minute
 FRAME_MS = 70
@@ -69,6 +76,23 @@ def mood_for(pct: float) -> str:
     if pct >= 50:
         return "normal"
     return "happy"
+
+
+# ── config (remembers your custom mascot image) ──────────────────────────────
+def load_config() -> dict:
+    try:
+        with open(CONFIG, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_config(cfg: dict) -> None:
+    try:
+        with open(CONFIG, "w", encoding="utf-8") as f:
+            json.dump(cfg, f)
+    except Exception:
+        pass
 
 
 # ── data ────────────────────────────────────────────────────────────────────
@@ -169,11 +193,70 @@ class Mascot(tk.Canvas):
         self.phase = 0.0
         self.love_until = 0.0
         self.hearts: list[list[float]] = []   # [x, y, age]
+        self.frames: list[tk.PhotoImage] = []  # custom image (1+ frames for GIF)
+        self.frame_i = 0
+        self.frame_t = 0
+        self.img_path: str | None = None
         self.bind("<Button-1>", self._poke)
+        self.bind("<Button-3>", self._menu)   # right-click → swap image
         self.after(FRAME_MS, self._tick)
+        path = load_config().get("mascot_image")
+        if path and os.path.exists(path):
+            self.set_image(path)
 
     def set_mood(self, mood: str):
         self.mood = mood
+
+    # ── custom image ─────────────────────────────────────────────────────────
+    def set_image(self, path: str) -> bool:
+        """Load a PNG/GIF as the mascot (all GIF frames if animated).
+        Scaled down to fit the strip. Returns True on success."""
+        frames: list[tk.PhotoImage] = []
+        try:
+            i = 0
+            while True:
+                try:
+                    fr = tk.PhotoImage(file=path, format=f"gif -index {i}")
+                except tk.TclError:
+                    if i == 0:                       # not a (multi-frame) gif
+                        fr = tk.PhotoImage(file=path)
+                    else:
+                        break                        # ran past the last frame
+                f = max(1, math.ceil(fr.height() / (self.H - 8)))
+                if f > 1:
+                    fr = fr.subsample(f, f)
+                frames.append(fr)
+                i += 1
+                if i > 240:                          # safety cap
+                    break
+        except Exception:
+            return False
+        if not frames:
+            return False
+        self.frames, self.frame_i, self.img_path = frames, 0, path
+        return True
+
+    def clear_image(self):
+        self.frames, self.img_path = [], None
+
+    def _menu(self, e):
+        m = tk.Menu(self, tearoff=0, bg=BG, fg=FG,
+                    activebackground=CORAL, activeforeground=BG)
+        m.add_command(label="Choose image…", command=self._choose)
+        if self.frames:
+            m.add_command(label="Reset to Clawd", command=self._reset)
+        m.tk_popup(e.x_root, e.y_root)
+
+    def _choose(self):
+        path = filedialog.askopenfilename(
+            title="Pick a mascot image",
+            filetypes=[("Images", "*.png *.gif"), ("All files", "*.*")])
+        if path and self.set_image(path):
+            cfg = load_config(); cfg["mascot_image"] = path; save_config(cfg)
+
+    def _reset(self):
+        self.clear_image()
+        cfg = load_config(); cfg.pop("mascot_image", None); save_config(cfg)
 
     def _poke(self, _e=None):
         """Clicked → grin with eyes shut + pop hearts."""
@@ -188,7 +271,8 @@ class Mascot(tk.Canvas):
 
     def _tick(self):
         w = self.winfo_width() or 240
-        m = self.SW * self.PX / 2 + 2
+        m = (self.frames[0].width() / 2 if self.frames
+             else self.SW * self.PX / 2) + 2
         self.x += self.dir * self._speed()
         if self.x > w - m:
             self.x, self.dir = w - m, -1
@@ -199,6 +283,11 @@ class Mascot(tk.Canvas):
             hb[1] -= 1.6
             hb[2] += 1
         self.hearts = [h for h in self.hearts if h[2] < 34]
+        if len(self.frames) > 1:             # advance animated GIF (~every 3 ticks)
+            self.frame_t += 1
+            if self.frame_t >= 3:
+                self.frame_t = 0
+                self.frame_i = (self.frame_i + 1) % len(self.frames)
         self._draw()
         self.after(FRAME_MS, self._tick)
 
@@ -218,6 +307,15 @@ class Mascot(tk.Canvas):
         happy = self.mood == "happy" or love
         tired = self.mood == "tired" and not love
         bob = math.sin(self.phase) * (3 if happy else 1.6 if not tired else 0.8)
+
+        if self.frames:                       # custom image replaces Clawd
+            fr = self.frames[self.frame_i]
+            self.create_image(self.x, self.H - fr.height() / 2 - 2 + bob,
+                              image=fr, anchor="center")
+            for hx, hy, age in self.hearts:   # clicks still pop hearts
+                self._heart(hx, hy, HEART if int(age) % 6 < 3 else CORAL_HI)
+            return
+
         ox = self.x - self.SW * PX / 2
         oy = (self.H - 13 * PX) + bob
 

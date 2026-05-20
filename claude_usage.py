@@ -152,12 +152,14 @@ def fmt_reset(iso: str | None) -> str:
 
 
 def make_clawd_icon(size: int = 32) -> tk.PhotoImage:
-    """A little pixel Clawd crab icon (coral on black), no image deps."""
+    """A little pixel Clawd crab icon (coral on black), no image deps.
+    Coordinates are authored on a 32-grid and scaled to `size`."""
     g = [[BG] * size for _ in range(size)]
+    k = size / 32
 
     def box(x0, y0, x1, y1, c):
-        for y in range(max(0, y0), min(size, y1)):
-            for x in range(max(0, x0), min(size, x1)):
+        for y in range(max(0, round(y0 * k)), min(size, round(y1 * k))):
+            for x in range(max(0, round(x0 * k)), min(size, round(x1 * k))):
                 g[y][x] = c
 
     box(8, 13, 24, 24, CORAL)            # body
@@ -194,24 +196,36 @@ class Mascot(tk.Canvas):
         self.phase = 0.0
         self.love_until = 0.0
         self.hearts: list[list[float]] = []   # [x, y, age]
-        self.frames: list[tk.PhotoImage] = []  # custom image (1+ frames for GIF)
+        # one custom image (1+ frames for animated GIF) per stage
+        self.mood_frames: dict[str, list[tk.PhotoImage]] = {}
+        self.mood_path: dict[str, str] = {}
+        self.frames: list[tk.PhotoImage] = []  # = frames for the current mood
         self.frame_i = 0
         self.frame_t = 0
-        self.img_path: str | None = None
         self.bind("<Button-1>", self._poke)
-        self.bind("<Button-3>", self._menu)   # right-click → swap image
+        self.bind("<Button-3>", self._menu)   # right-click → swap images
         self.after(FRAME_MS, self._tick)
-        path = load_config().get("mascot_image")
-        if path and os.path.exists(path):
-            self.set_image(path)
+        self._load_saved()
+
+    # usage-driven moods, plus "love" = the clicked/interacting stage
+    MOODS = (("happy", "Happy (<50%)"),
+             ("normal", "Normal (50–79%)"),
+             ("tired", "Tired (≥80%)"))
+    STAGES = MOODS + (("love", "Clicked / love"),)
 
     def set_mood(self, mood: str):
-        self.mood = mood
+        self.mood = mood                       # _tick recomputes active frames
 
-    # ── custom image ─────────────────────────────────────────────────────────
-    def set_image(self, path: str) -> bool:
-        """Load a PNG/GIF as the mascot (all GIF frames if animated).
-        Scaled down to fit the strip. Returns True on success."""
+    def _active_frames(self) -> list[tk.PhotoImage]:
+        """The image for the stage on screen right now: the clicked/love image
+        while interacting (if set), otherwise the current usage mood's image."""
+        if time.monotonic() < self.love_until and "love" in self.mood_frames:
+            return self.mood_frames["love"]
+        return self.mood_frames.get(self.mood, [])
+
+    # ── custom images (per stage) ─────────────────────────────────────────────
+    def _load_frames(self, path: str) -> list[tk.PhotoImage] | None:
+        """Load a PNG/GIF (all GIF frames if animated), scaled to fit the strip."""
         frames: list[tk.PhotoImage] = []
         try:
             i = 0
@@ -231,33 +245,75 @@ class Mascot(tk.Canvas):
                 if i > 240:                          # safety cap
                     break
         except Exception:
-            return False
+            return None
+        return frames or None
+
+    def set_image(self, mood: str, path: str) -> bool:
+        frames = self._load_frames(path)
         if not frames:
             return False
-        self.frames, self.frame_i, self.img_path = frames, 0, path
+        self.mood_frames[mood] = frames
+        self.mood_path[mood] = path
         return True
 
-    def clear_image(self):
-        self.frames, self.img_path = [], None
+    def clear_images(self):
+        self.mood_frames.clear()
+        self.mood_path.clear()
+
+    def _load_saved(self):
+        cfg = load_config()
+        imgs = dict(cfg.get("mascot_images") or {})
+        old = cfg.get("mascot_image")            # back-compat: one image for all
+        if old and not imgs:
+            imgs = {m: old for m, _ in self.MOODS}
+        for stage, _ in self.STAGES:
+            p = imgs.get(stage)
+            if p and os.path.exists(p):
+                self.set_image(stage, p)
+
+    def _save(self):
+        cfg = load_config()
+        cfg.pop("mascot_image", None)            # drop legacy single-image key
+        cfg["mascot_images"] = dict(self.mood_path)
+        save_config(cfg)
 
     def _menu(self, e):
         m = tk.Menu(self, tearoff=0, bg=BG, fg=FG,
                     activebackground=CORAL, activeforeground=BG)
-        m.add_command(label="Choose image…", command=self._choose)
-        if self.frames:
+        for stage, label in self.STAGES:
+            mark = " ✓" if stage in self.mood_frames else ""
+            m.add_command(label=f"Set image — {label}{mark}",
+                          command=lambda st=stage: self._choose(st))
+        m.add_separator()
+        m.add_command(label="Same image for all stages…",
+                      command=self._choose_all)
+        if self.mood_frames:
             m.add_command(label="Reset to Clawd", command=self._reset)
         m.tk_popup(e.x_root, e.y_root)
 
-    def _choose(self):
-        path = filedialog.askopenfilename(
+    def _ask(self) -> str:
+        return filedialog.askopenfilename(
             title="Pick a mascot image",
             filetypes=[("Images", "*.png *.gif"), ("All files", "*.*")])
-        if path and self.set_image(path):
-            cfg = load_config(); cfg["mascot_image"] = path; save_config(cfg)
+
+    def _choose(self, mood: str):
+        path = self._ask()
+        if path and self.set_image(mood, path):
+            self._save()
+
+    def _choose_all(self):
+        path = self._ask()
+        if not path:
+            return
+        ok = False
+        for mood, _ in self.MOODS:
+            ok = self.set_image(mood, path) or ok
+        if ok:
+            self._save()
 
     def _reset(self):
-        self.clear_image()
-        cfg = load_config(); cfg.pop("mascot_image", None); save_config(cfg)
+        self.clear_images()
+        self._save()
 
     def _poke(self, _e=None):
         """Clicked → grin with eyes shut + pop hearts."""
@@ -271,6 +327,9 @@ class Mascot(tk.Canvas):
         return {"happy": 2.6, "normal": 1.6, "tired": 0.7}[self.mood]
 
     def _tick(self):
+        self.frames = self._active_frames()  # stage image for this frame (may be [])
+        if self.frame_i >= len(self.frames):
+            self.frame_i = 0
         w = self.winfo_width() or 240
         m = (self.frames[0].width() / 2 if self.frames
              else self.SW * self.PX / 2) + 2
@@ -310,7 +369,7 @@ class Mascot(tk.Canvas):
         bob = math.sin(self.phase) * (3 if happy else 1.6 if not tired else 0.8)
 
         if self.frames:                       # custom image replaces Clawd
-            fr = self.frames[self.frame_i]
+            fr = self.frames[self.frame_i % len(self.frames)]
             self.create_image(self.x, self.H - fr.height() / 2 - 2 + bob,
                               image=fr, anchor="center")
             for hx, hy, age in self.hearts:   # clicks still pop hearts
@@ -429,8 +488,9 @@ class App(tk.Tk):
         self.attributes("-topmost", True)
         self.geometry("260x290")
         self.resizable(False, False)
-        self._icon = make_clawd_icon(32)
-        self.iconphoto(True, self._icon)
+        # same Clawd crab as the window/tab icon, at a few sizes for crispness
+        self._icons = [make_clawd_icon(s) for s in (16, 32, 48)]
+        self.iconphoto(True, *self._icons)
         self.after(60, self._style_titlebar)
 
         head = tk.Frame(self, bg=BG)
@@ -528,8 +588,20 @@ def single_instance(port: int = 49517):
         return None
 
 
+def set_app_id():
+    """Tell Windows this is its own app (not pythonw) so the taskbar shows
+    our Clawd icon instead of the generic Python icon."""
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "Moysed.ClaudeUsage.Widget")
+    except Exception:
+        pass
+
+
 if __name__ == "__main__":
     _lock = single_instance()
     if _lock is None:
         raise SystemExit(0)        # already running
+    set_app_id()
     App().mainloop()

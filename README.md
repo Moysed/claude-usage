@@ -18,11 +18,17 @@ Bar colour: green < 70% · amber 70–89% · red ≥ 90%. Mascot + window icon a
 drawn in code (Tkinter vectors) — no image files, still stdlib-only.
 
 ## Use your own mascot
-**Right-click the mascot** → **Choose image…** to swap Clawd for your own
-picture. PNG and GIF work (animated GIFs play); your image paces and bobs with
-the same mood-driven rhythm. The choice is remembered in `~/.claude-usage.json`.
-Right-click → **Reset to Clawd** brings the crab back. Still stdlib-only — Tk
-loads PNG/GIF natively, no `pip install`.
+**Right-click the mascot** to swap Clawd for your own picture. You can set a
+**different image per stage**:
+- **Happy** (<50%), **Normal** (50–79%), **Tired** (≥80%) — the mascot changes
+  art as your usage climbs
+- **Clicked / love** — shown while you're clicking/interacting (the heart pop)
+
+Or pick **"Same image for all stages…"** for one image throughout. PNG and GIF
+work (animated GIFs play); your image paces and bobs with the same mood-driven
+rhythm, and clicking it still pops hearts. Choices are remembered in
+`~/.claude-usage.json`. Right-click → **Reset to Clawd** brings the crab back.
+Still stdlib-only — Tk loads PNG/GIF natively, no `pip install`.
 
 ## Run
 ```
